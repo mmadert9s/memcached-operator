@@ -29,15 +29,21 @@ type MemcachedSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	//+kubebuilder:validation:Minimum=0
 	// Size is the size of the memcached deployment
-	Size int32 `json:"size"`
+	Size    int32  `json:"size"`
+	Version string `json:"version"`
 }
 
 // MemcachedStatus defines the observed state of Memcached
 type MemcachedStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
 	// Nodes are the names of the memcached pods
 	Nodes []string `json:"nodes"`
+	// CurrentVersion keeps track of the last valid applied version.
+	CurrentVersion string `json:"version,omitempty"`
+	// CheckedVersion lets the controller know if the version in the spec was already checked for validity or not.
+	CheckedVersion string `json:"specversion,omitempty"`
 }
 
 //+kubebuilder:object:root=true

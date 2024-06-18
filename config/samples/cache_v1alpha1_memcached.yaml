@@ -10,4 +10,4 @@ metadata:
   name: memcached-sample
 spec:
   size: 2
-  # TODO(user): Add fields here
+  version: "1.6.2"

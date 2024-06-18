@@ -41,19 +41,28 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              version:
+                type: string
             required:
             - size
+            - version
             type: object
           status:
             description: MemcachedStatus defines the observed state of Memcached
             properties:
               nodes:
-                description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
-                  of cluster Important: Run "make" to regenerate code after modifying
-                  this file Nodes are the names of the memcached pods'
+                description: Nodes are the names of the memcached pods
                 items:
                   type: string
                 type: array
+              specversion:
+                description: CheckedVersion lets the controller know if the version
+                  in the spec was already checked for validity or not.
+                type: string
+              version:
+                description: CurrentVersion keeps track of the last valid applied
+                  version.
+                type: string
             required:
             - nodes
             type: object
