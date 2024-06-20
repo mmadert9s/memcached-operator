@@ -50,19 +50,19 @@ spec:
           status:
             description: MemcachedStatus defines the observed state of Memcached
             properties:
+              checkedversion:
+                description: CheckedVersion lets the controller know if the version
+                  in the spec was already checked for validity or not.
+                type: string
+              currentversion:
+                description: CurrentVersion keeps track of the last valid applied
+                  version.
+                type: string
               nodes:
                 description: Nodes are the names of the memcached pods
                 items:
                   type: string
                 type: array
-              specversion:
-                description: CheckedVersion lets the controller know if the version
-                  in the spec was already checked for validity or not.
-                type: string
-              version:
-                description: CurrentVersion keeps track of the last valid applied
-                  version.
-                type: string
             required:
             - nodes
             type: object
