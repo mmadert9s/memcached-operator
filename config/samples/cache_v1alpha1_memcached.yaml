@@ -9,5 +9,5 @@ metadata:
     app.kubernetes.io/created-by: memcached-operator
   name: memcached-sample
 spec:
-  size: 2
-  version: "1.6.2"
+  size: 1
+  version: "1.6.0"

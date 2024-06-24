@@ -40,10 +40,6 @@ type MemcachedStatus struct {
 
 	// Nodes are the names of the memcached pods
 	Nodes []string `json:"nodes"`
-	// CurrentVersion keeps track of the last valid applied version.
-	CurrentVersion string `json:"currentversion,omitempty"`
-	// CheckedVersion lets the controller know if the version in the spec was already checked for validity or not.
-	CheckedVersion string `json:"checkedversion,omitempty"`
 }
 
 //+kubebuilder:object:root=true
