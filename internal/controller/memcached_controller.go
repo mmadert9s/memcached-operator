@@ -18,7 +18,10 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"reflect"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,6 +34,8 @@ import (
 	corev1 "k8s.io/api/core/v1"                   // added
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1" // added
 	"k8s.io/apimachinery/pkg/types"               // added
+
+	goversion "github.com/hashicorp/go-version"
 )
 
 // MemcachedReconciler reconciles a Memcached object
@@ -57,9 +62,6 @@ type MemcachedReconciler struct {
 func (r *MemcachedReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
-	// log := r.Log.WithValues()
-
 	// 1. Fetch the memcached instance
 	memcached := &cachev1alpha1.Memcached{}
 	err := r.Get(ctx, req.NamespacedName, memcached)
@@ -75,14 +77,15 @@ func (r *MemcachedReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	log.Info("1. Fetch the memcached instance. Memcached resource found", "memcached.Name", memcached.Name, "memcached.Namespace", memcached.Namespace)
 
-	// 2. Check if deployment exists, if not create one
-	found := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: req.Name}, found)
+	// 2. Check if deployment exists, if not create one.
+	specVersion := memcached.Spec.Version
+	deployment := &appsv1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: req.Name}, deployment)
 	if err != nil && errors.IsNotFound(err) {
 		// Define new deployment
-		dep := r.deploymentForMemcached(memcached)
+		dep := r.deploymentForMemcached(memcached, specVersion)
 		log.Info("2. Check if deployment exists, if not create one. Create a new deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-		err := r.Create(ctx, dep)
+		err = r.Create(ctx, dep)
 		if err != nil {
 			log.Error(err, "2. Check if deployment exists, if not create one. Create a new deployment. Failed to create new deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 			return ctrl.Result{}, err
@@ -97,15 +100,15 @@ func (r *MemcachedReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// 3. Ensure the deployment is the same size as the spec
 	size := memcached.Spec.Size
-	if *found.Spec.Replicas != size {
-		found.Spec.Replicas = &size // use same ref is safe?
-		err := r.Update(ctx, found)
+	if *deployment.Spec.Replicas != size {
+		deployment.Spec.Replicas = &size // use same ref is safe?
+		err := r.Update(ctx, deployment)
 		if err != nil {
-			log.Error(err, "3. Ensure the deployment is the same size as the spec. Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
+			log.Error(err, "3. Ensure the deployment is the same size as the spec. Failed to update Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
 			return ctrl.Result{}, err
 		}
 
-		log.Error(err, "3. Ensure the deployment is the same size as the spec. Update deployment size", "Deployment.Spec.Replicas", size)
+		log.Info("3. Ensure the deployment is the same size as the spec. Update deployment size", "Deployment.Spec.Replicas", size)
 		return ctrl.Result{Requeue: true}, nil
 	}
 
@@ -136,6 +139,45 @@ func (r *MemcachedReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	log.Info("4. Update the Memcached status with the pod names. Update memcached.Status", "memcached.Status.Nodes", memcached.Status.Nodes)
 
+	// 5. Ensure the deployment image matches the desired version
+	container := &deployment.Spec.Template.Spec.Containers[0]
+	currentVersion := versionFromImage(container.Image)
+
+	if currentVersion != specVersion {
+		valid, err := isValidVersion(specVersion)
+		if err != nil {
+			log.Error(err, "5. Update the memcached version. Unexpected error checking version")
+			return ctrl.Result{}, err
+		}
+
+		if !valid {
+			log.Error(err, "5. Update the memcached version. New version is invalid.")
+			return ctrl.Result{}, nil
+		}
+
+		minorUpgrade, err := isMinorUpgrade(currentVersion, specVersion)
+		if err != nil {
+			log.Error(err, "5. Update the memcached version. Unexpected error comparing versions.")
+			return ctrl.Result{}, err
+		}
+
+		if !minorUpgrade {
+			log.Error(err, "5. Update the memcached version. New version is not a minor upgrade.")
+			return ctrl.Result{}, nil
+		}
+
+		image := imageName(specVersion)
+		container.Image = image
+		err = r.Update(ctx, deployment)
+		if err != nil {
+			log.Info("5. Ensure the deployment image matches the current valid version. Update deployment. Failed to update deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+			return ctrl.Result{}, err
+		}
+
+		log.Info("5. Ensure the deployment image matches the current valid version. Update deployment", "container.Image", image)
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -147,7 +189,7 @@ func (r *MemcachedReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *MemcachedReconciler) deploymentForMemcached(m *cachev1alpha1.Memcached) *appsv1.Deployment {
+func (r *MemcachedReconciler) deploymentForMemcached(m *cachev1alpha1.Memcached, version string) *appsv1.Deployment {
 	ls := labelsForMemcached(m.Name)
 	replicas := m.Spec.Size
 
@@ -168,9 +210,9 @@ func (r *MemcachedReconciler) deploymentForMemcached(m *cachev1alpha1.Memcached)
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Image:   "memcached:1.4.36-alpine",
-							Name:    "memcached",
-							Command: []string{"memcached", "-m=64", "-o", "modern", "-v"},
+							Image: imageName(version),
+							Name:  "memcached",
+							// Command: []string{"memcached", "-m=64", "-o", "modern", "-v"},
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: 11211,
@@ -201,4 +243,73 @@ func getPodNames(pods []corev1.Pod) []string {
 	}
 
 	return names
+}
+
+// isValidVersion queries the docker hub API to check if the provided version can be resolved to an image tag.
+func isValidVersion(version string) (bool, error) {
+	// Check if version is valid Semver
+	_, err := goversion.NewSemver(version)
+	if err != nil {
+		// Assume error means the version is malformed.
+		return false, nil
+	}
+
+	// Check if tag exists in docker hub
+	tag := imageTag(version)
+	url := fmt.Sprintf("http://hub.docker.com/v2/repositories/library/memcached/tags/%s", tag)
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println("Error checking tag:", err)
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Got status:", resp.StatusCode)
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		return true, nil
+	}
+
+	return false, fmt.Errorf("unexpected statuscode while checking dockerhub tag: %d", resp.StatusCode)
+}
+
+// isMinorUpgrade checks if the new (target) version represents a minor version upgrade from the current one.
+func isMinorUpgrade(currentVersion string, targetVersion string) (bool, error) {
+	current, err := goversion.NewSemver(currentVersion)
+	if err != nil {
+		return false, err
+	}
+
+	target, err := goversion.NewSemver(targetVersion)
+	if err != nil {
+		return false, err
+	}
+
+	if current.GreaterThanOrEqual(target) {
+		// Downgrade or equal.
+		return false, nil
+	}
+
+	if current.Core().Segments()[0] != target.Core().Segments()[0] {
+		// target is a major upgrade
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func imageTag(version string) string {
+	return version + "-alpine"
+}
+
+func imageName(version string) string {
+	return "memcached:" + imageTag(version)
+}
+
+func versionFromImage(image string) string {
+	return strings.Split(strings.TrimSuffix(image, "-alpine"), ":")[1]
 }

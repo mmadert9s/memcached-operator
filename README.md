@@ -1,8 +1,10 @@
 # memcached-operator
-// TODO(user): Add simple overview of use/purpose
+Simple operator for deployment memcached.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+This operator deploys n memcached nodes where n specified in spec.size.
+This operator supports specifying the version to use in the spec. NOTE: the version must be available as an "-alpine" suffixed tag in the memcached docker repository. Versions under 1.4.35 not supported.
+This operator supports minor upgrades (e.g. 1.5 -> 1.6 or 1.6.1 -> 1.6.2, again with the limitation that the image must exist as a "-alpine" image) by updating the version field in the spec.
 
 ## Getting Started
 
